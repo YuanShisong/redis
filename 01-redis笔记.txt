@@ -1,6 +1,8 @@
 不小心操作了flushall/flushdb
 	解决方案：赶紧shutdown nosave 删掉aof文件中最后的flush命令
 
+通过rdb文件拷贝一个redis库
+	直接拷贝rdb文件，将新库的rdb打开并将rdb文件指向拷贝后的文件，启动redis通过文件恢复即可
 redis-check-rdb工具 检查rdb文件是否损坏
 	root@josh-ubuntu:/usr/local/redis-4.0.8# redis-check-rdb ./rdb/dump6380.rdb 
 	[offset 0] Checking RDB file ./rdb/dump6380.rdb
