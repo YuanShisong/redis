@@ -1,0 +1,20 @@
+不小心操作了flushall/flushdb
+	解决方案：赶紧shutdown nosave 删掉aof文件中最后的flush命令
+
+redis-check-rdb工具 检查rdb文件是否损坏
+	root@josh-ubuntu:/usr/local/redis-4.0.8# redis-check-rdb ./rdb/dump6380.rdb 
+	[offset 0] Checking RDB file ./rdb/dump6380.rdb
+	[offset 26] AUX FIELD redis-ver = '4.0.8'
+	[offset 40] AUX FIELD redis-bits = '64'
+	[offset 52] AUX FIELD ctime = '1521738904'
+	[offset 67] AUX FIELD used-mem = '1917088'
+	[offset 85] AUX FIELD repl-stream-db = '0'
+	[offset 135] AUX FIELD repl-id = '458f25b39165943d2e0f0cd7d98e254372d3f335'
+	[offset 151] AUX FIELD repl-offset = '3193'
+	[offset 167] AUX FIELD aof-preamble = '0'
+	[offset 169] Selecting DB ID 0
+	[offset 196] Checksum OK
+	[offset 196] \o/ RDB looks OK! \o/
+	[info] 2 keys read
+	[info] 0 expires
+	[info] 0 already expired
