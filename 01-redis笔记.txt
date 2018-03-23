@@ -1,3 +1,128 @@
+持久化
+	两种方式RDB AOF
+		RDB是按时间点进行内存快照 生成的二进制文件
+		AOF是记录每次写操作的日志文件，append_only类型，可以后台重写日志文件(比如INCRBY一百次，重写后直接INCRBY 100即可)
+		能完全关掉持久化功能，将redis做缓存用
+		可以同时打开RDB AOF功能，重启时用AOF，因为AOF的数据最完整。
+		RDB优点
+			RDB文件是以时间为节点经过压缩的redis内存快照文件，用来做备份文件非常好
+			适合用来做灾后重建，单个的压缩文件很适合做远程传输。
+			RDB能最大化redis性能，只需要后台启动一个子进程就可以，子进程会做剩余工作。父进程不会有硬盘IO之类的操作
+			相比AOF RDB允许更快的重启大数据集的redis
+		RDB缺点
+			由于RDB是按时间保存内存快照，redis异常停止工作时，总会丢失最近一段时间(上次快照到现在的)数据。
+			RDB经常需要后台启动子进程来保存文件，如果数据量很大这个动作会很耗时，可能会导致redis服务停止响应(几毫秒甚至数秒钟)。而虽然AOF也需要后台启动进程，但可以调整重写日志频率，而不损失任何性能
+		AOF优点
+			用AOF更durable，能用不同的fsync策略：不fsync，每秒钟fsync，每次查询都fsync。默认配置每秒fsync一次，但是可能会丢失一秒钟的写数据(fsync是由后台线程)。
+			AOF是append-only(追加写)，所以突然断电时也不损坏数据。即使aof文件中有写了一半的命令，redis-check-aof功能还是能轻易修复。
+			当aof文件过大时，redis能后台自动重写aof文件。重写绝对安全(比如INCRBY一百次，重写后直接INCRBY 100即可)且不影响原aof继续写入。
+			aof以很容易理解的方式记录日志，很容易导出，如果你不小心执行了FLUSHALL，只要aof文件没有重写，依然可以恢复数据，只需要停止redis服务，打开aof文件删除FLUSHALL命令，重启redis即可。
+		AOF缺点
+			通常，同样大小的数据备份AOF文件要大于RDB文件
+			通常AOF比RDB慢，这也取决于fsync策略。总体来说，每秒一次fsync，性能还是很好，而关掉fsync，理论上性能应该和RDB一样。但是依然RDB方式更能保证低延迟，即使在大量写入情况下。
+			在恢复数据时，虽然测试足够严格而且至今没有发现Bug，但aof依然是有可能出现bug的(必然的)。但RDB是快照绝对不会有bug。
+	该用那种方式
+		如果想要redis的数据安全性和PostgreSQL一个级别，应该RDB AOF两种方式一起配合使用
+		如果在灾难情况下能接受几分钟的数据损失，可以只使用RDB。
+		不鼓励单纯使用aof做备份，因为1)rdb以时间为节点做备份很好 2)rdb重启更快 3)aof不能排除出现bug的可能
+		PS：由于以上原因，redis官方表示很可能将RDB AOF两种方式结合起来出现一种持久化模式，但这是长久计划，短期内呵呵……。
+	快照Snapshotting
+		redis将快照二进制文件默认保存在dump.rdb中，可以在配置文件中配置具体保存策略，或者可以通过SAVE or BGSAVE命令手动保存。
+		如何工作：每当需要保存快照文件时，redis fork一个子进程，子进程向临时RDB文件中写数据，写完新的RDB文件后替换老文件。这种方式允许写时复制。
+	AOF文件Append-only file
+		快照方式连续性(durable)不是特别好,突然断电/kill -9最新的数据
+	
+搭建redis集群
+	两种方式
+		1/ 
+			master--slave1
+						|
+						---slave2
+		2/ 
+			master--slave1--slave2
+
+	搭建
+		第一种方式
+			master配置
+				关闭rdb(由slave来备份)
+					注释掉三个save即可
+					#save 900 1
+					#save 300 10
+					#save 60 10000
+				开启aof
+					appendonly yes
+				路径 放在安装目录的persist下
+					dir ./persist
+				配置密码(可选)
+					################################## SECURITY ###################################
+					requirepass **********
+			slave配置
+				声明slave-of
+					slaveof localhost 6379
+				配置密码(可选) 在REPLICATION下
+					################################# REPLICATION #################################
+					masterauth ********** #填入master的密码 设置密码后
+				某个slave开启rdb功能
+					6380开启rdb
+				配置是否只读
+					slave-read-only yes
+				开启rdb修改rdb文件名和路径
+					dir ./persist
+					dbfilename dump6381.rdb
+					dbfilename dump6380.rdb
+				关闭aof功能 修改aof文件名
+					appendonly no
+					appendfilename "appendonly6380.aof"
+					appendfilename "appendonly6381.aof"
+			启动三台服务器
+					redis-server redis.conf
+					redis-server redis6380.conf
+					redis-server redis6381.conf
+			测试
+				127.0.0.1:6379> set foo bar
+				OK
+				127.0.0.1:6380> keys *
+				1) "foo"
+				127.0.0.1:6381> get foo
+				"bar"
+				127.0.0.1:6381> set title hha
+				(error) READONLY You can't write against a read only slave.
+				
+				OK
+				要注意,虽然6379和6381都禁止了rdb功能，但依然生成了对应的rbd文件,但仔细看文件时间(如下)会发现dump6381.rdb和dump.rdb是相同时间生成的，我猜应该是6380执行的rdb工作，另外两台服务器只是将文件拷贝过去
+					root@joshua-ubuntu:/usr/local/redis-4.0.8# ll persist/
+					total 28
+					drwxr-xr-x 2 root root 4096 Mar 22 17:40 ./
+					drwxrwxr-x 7 root root 4096 Mar 22 17:39 ../
+					-rw-r--r-- 1 root root   54 Mar 22 17:28 appendonly.aof
+					-rw-r--r-- 1 root root  401 Mar 22 17:43 appendonly-test.aof
+					-rw-r--r-- 1 root root  189 Mar 22 17:28 dump6380.rdb
+					-rw-r--r-- 1 root root  189 Mar 22 17:29 dump6381.rdb
+					-rw-r--r-- 1 root root  189 Mar 22 17:29 dump.rdb
+				那如果配置三个服务器的rdb文件同名会不会拷贝呢，试以下
+					1/ 单台服务器测试关闭rdb功能后是不会生成rdb文件的
+					2/ 现在将三台服务器的rdb文件都改为dump.rdb,但只有6380开启rbd功能，执行一些写入操作，结果如下：
+						root@joshua-ubuntu:/usr/local/redis-4.0.8# ll persist/
+						total 20
+						drwxr-xr-x 2 root root 4096 Mar 22 17:56 ./
+						drwxrwxr-x 7 root root 4096 Mar 22 17:53 ../
+						-rw-r--r-- 1 root root  368 Mar 22 17:57 appendonly.aof
+						-rw-r--r-- 1 root root  401 Mar 22 17:43 appendonly-test.aof
+						-rw-r--r-- 1 root root  189 Mar 22 17:56 dump.rdb
+						root@joshua-ubuntu:/usr/local/redis-4.0.8#
+				结论：这种简单集群环境下，各服务器rdb文件保持相同即可，不然会造成不必要的带宽浪费
+			缺陷：
+				每次slave断开后(无论主动断开还是网络异常)，再次连接master时都要master全部dump出rdb文件再aof，所以多台slave不要一下都启动起来
+	集群其他配置项
+		################################# REPLICATION #################################
+		slave-priority 100 # 从机级别数字小级别高,在主机死掉的时候级别最高的代替主机,0：不允许做主机
+		slave-serve-stale-data yes/no # slave和master断开时,是否允许用旧数据响应请求,数据可能已过期
+		min-slaves-to-write 3 # 少于3太从服务器时，主机禁止写入
+		min-slaves-max-lag 10 # 延迟超过10秒时，主机禁止写入
+		操作
+			copy两个配置文件命名为redis6380.conf  redis6381.conf作为从服务器的配置文件
+			对应的修改配置我文件中端口为6380 和 6381
+
 不小心操作了flushall/flushdb
 	解决方案：赶紧shutdown nosave 删掉aof文件中最后的flush命令
 
