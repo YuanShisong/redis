@@ -145,3 +145,15 @@ redis-check-rdb工具 检查rdb文件是否损坏
 	[info] 2 keys read
 	[info] 0 expires
 	[info] 0 already expired
+
+
+Sentinel-官方提供的高可用解决方案
+	Monitoring：监控功能，Sentinel不断检查主从服务器是否正常工作
+	Notification：通知功能，如果Sentinel监控的redis实例出现问题，Sentinel能通知系统管理员 另一个电脑程序等
+	Automatic failover：自动失效备援功能，如果主服务器出现问题，Sentinel自动将一台从服务器变为主服务器，并且将其他从服务器配置到新主服务器，并通知应用服务新的服务地址。
+	Configuration provider：配置提供者(这么说太费解),简单说就是Sentinel告知客户端当前master服务器地址，如果发生失效备援，sentinel告知客户端新的地址。
+	
+	天生支持分布式，分布式sentinel的好处：
+		1/ 减少误报,需要多台sentinel判定master宕机
+		2/ 更健壮，即使有Sentinel停止工作，依然能提供服务
+	
