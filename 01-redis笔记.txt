@@ -31,6 +31,30 @@
 		如何工作：每当需要保存快照文件时，redis fork一个子进程，子进程向临时RDB文件中写数据，写完新的RDB文件后替换老文件。这种方式允许写时复制。
 	AOF文件Append-only file
 		快照方式连续性(durable)不是特别好,突然断电/kill -9最新的数据
+
+	不小心操作了flushall/flushdb
+		解决方案：赶紧shutdown nosave 删掉aof文件中最后的flush命令
+
+	通过rdb文件拷贝一个redis库
+		直接拷贝rdb文件，将新库的rdb打开并将rdb文件指向拷贝后的文件，启动redis通过文件恢复即可
+		
+	redis-check-rdb工具 检查rdb文件是否损坏
+		root@josh-ubuntu:/usr/local/redis-4.0.8# redis-check-rdb ./rdb/dump6380.rdb 
+		[offset 0] Checking RDB file ./rdb/dump6380.rdb
+		[offset 26] AUX FIELD redis-ver = '4.0.8'
+		[offset 40] AUX FIELD redis-bits = '64'
+		[offset 52] AUX FIELD ctime = '1521738904'
+		[offset 67] AUX FIELD used-mem = '1917088'
+		[offset 85] AUX FIELD repl-stream-db = '0'
+		[offset 135] AUX FIELD repl-id = '458f25b39165943d2e0f0cd7d98e254372d3f335'
+		[offset 151] AUX FIELD repl-offset = '3193'
+		[offset 167] AUX FIELD aof-preamble = '0'
+		[offset 169] Selecting DB ID 0
+		[offset 196] Checksum OK
+		[offset 196] \o/ RDB looks OK! \o/
+		[info] 2 keys read
+		[info] 0 expires
+		[info] 0 already expired
 	
 搭建redis集群
 	两种方式
@@ -56,12 +80,13 @@
 				配置密码(可选)
 					################################## SECURITY ###################################
 					requirepass **********
+
 			slave配置
 				声明slave-of
 					slaveof localhost 6379
 				配置密码(可选) 在REPLICATION下
 					################################# REPLICATION #################################
-					masterauth ********** #填入master的密码 设置密码后
+					masterauth ********** #填入master的密码
 				某个slave开启rdb功能
 					6380开启rdb
 				配置是否只读
@@ -74,6 +99,7 @@
 					appendonly no
 					appendfilename "appendonly6380.aof"
 					appendfilename "appendonly6381.aof"
+			
 			启动三台服务器
 					redis-server redis.conf
 					redis-server redis6380.conf
@@ -99,7 +125,7 @@
 					-rw-r--r-- 1 root root  189 Mar 22 17:28 dump6380.rdb
 					-rw-r--r-- 1 root root  189 Mar 22 17:29 dump6381.rdb
 					-rw-r--r-- 1 root root  189 Mar 22 17:29 dump.rdb
-				那如果配置三个服务器的rdb文件同名会不会拷贝呢，试以下
+				那如果配置三个服务器的rdb文件同名会不会拷贝呢，试一下
 					1/ 单台服务器测试关闭rdb功能后是不会生成rdb文件的
 					2/ 现在将三台服务器的rdb文件都改为dump.rdb,但只有6380开启rbd功能，执行一些写入操作，结果如下：
 						root@joshua-ubuntu:/usr/local/redis-4.0.8# ll persist/
@@ -117,34 +143,8 @@
 		################################# REPLICATION #################################
 		slave-priority 100 # 从机级别数字小级别高,在主机死掉的时候级别最高的代替主机,0：不允许做主机
 		slave-serve-stale-data yes/no # slave和master断开时,是否允许用旧数据响应请求,数据可能已过期
-		min-slaves-to-write 3 # 少于3太从服务器时，主机禁止写入
+		min-slaves-to-write 3 # 少于3台从服务器时，主机禁止写入
 		min-slaves-max-lag 10 # 延迟超过10秒时，主机禁止写入
-		操作
-			copy两个配置文件命名为redis6380.conf  redis6381.conf作为从服务器的配置文件
-			对应的修改配置我文件中端口为6380 和 6381
-
-不小心操作了flushall/flushdb
-	解决方案：赶紧shutdown nosave 删掉aof文件中最后的flush命令
-
-通过rdb文件拷贝一个redis库
-	直接拷贝rdb文件，将新库的rdb打开并将rdb文件指向拷贝后的文件，启动redis通过文件恢复即可
-redis-check-rdb工具 检查rdb文件是否损坏
-	root@josh-ubuntu:/usr/local/redis-4.0.8# redis-check-rdb ./rdb/dump6380.rdb 
-	[offset 0] Checking RDB file ./rdb/dump6380.rdb
-	[offset 26] AUX FIELD redis-ver = '4.0.8'
-	[offset 40] AUX FIELD redis-bits = '64'
-	[offset 52] AUX FIELD ctime = '1521738904'
-	[offset 67] AUX FIELD used-mem = '1917088'
-	[offset 85] AUX FIELD repl-stream-db = '0'
-	[offset 135] AUX FIELD repl-id = '458f25b39165943d2e0f0cd7d98e254372d3f335'
-	[offset 151] AUX FIELD repl-offset = '3193'
-	[offset 167] AUX FIELD aof-preamble = '0'
-	[offset 169] Selecting DB ID 0
-	[offset 196] Checksum OK
-	[offset 196] \o/ RDB looks OK! \o/
-	[info] 2 keys read
-	[info] 0 expires
-	[info] 0 already expired
 
 
 Sentinel-官方提供的高可用解决方案
@@ -170,10 +170,7 @@ Sentinel-官方提供的高可用解决方案
 			sentinel parallel-syncs resque 5
 		你只需要将master指定给sentinel即可，每个master一个不同的名字，不需要指定slave(自动识别)，sentinel会自动更新配置(附带slave信息)，每次slave提升为master 每次发现新的sentinel都会重写配置信息。
 		
-		
-		参考文档：http://doc.redisfans.com/topic/sentinel.html
-		示例：
-			配置一个简单redis集群通过一台sentinel进行监控，手动杀掉master看sentinel故障迁移效果
+		示例：配置一个简单redis集群通过一台sentinel进行监控，手动杀掉master看sentinel故障迁移效果. 参考文档：http://doc.redisfans.com/topic/sentinel.html
 				集群服务器分别为: 6379 6380 6381，其中6380为master另外两台为slave，配置参见“搭建redis集群”
 				sentinel配置文件:
 					# sentinel monitor <master-name> <ip> <redis-port> <quorum>
@@ -378,7 +375,8 @@ Sentinel-官方提供的高可用解决方案
 					
 					重新启动6379 会发现6379变为6380的slave
 						10516:X 28 Mar 19:05:01.635 * +convert-to-slave slave 127.0.0.1:6379 127.0.0.1 6379 @ mymaster 127.0.0.1 6380
-					注意看一下redis的配置文件，会发现配置文件已经更改，这里不展开说了
+					注意看一下redis的配置文件，会发现配置文件已经更改，这里不展开了
+					
 			sentinel间通信
 				被sentinel管理的redis都接收sentinel的"__sentinel__:hello", sentinel每秒钟发送一次消息
 				root@joshua-ubuntu:/usr/local/redis-4.0.8# redis-cli -p 6379 PUBSUB CHANNELS 
@@ -408,4 +406,119 @@ Sentinel-官方提供的高可用解决方案
 				1) "message"
 				2) "__sentinel__:hello"
 				3) "127.0.0.1,26379,b10301d9665ffac7336da33548d522a9d1365a84,1,mymaster,127.0.0.1,6380,1"
-			sentinelapi
+			sentinel API
+			
+key设计原则
+	例子：书和书签问题
+		书签系统
+		create table book (
+		bookid int,
+		title char(20)
+		)engine myisam charset utf8;
+		--有以下几本书
+		insert into book values 
+		(5 , 'PHP圣经'),
+		(6 , 'ruby实战'),
+		(7 , 'mysql运维')
+		(8, 'ruby服务端编程');
+
+		create table tags (
+		tid int,
+		bookid int,
+		content char(20)
+		)engine myisam charset utf8;
+		
+		--有以下几个书签
+		insert into tags values 
+		(10 , 5 , 'PHP'),
+		(11 , 5 , 'WEB'),
+		(12 , 6 , 'WEB'),
+		(13 , 6 , 'ruby'),
+		(14 , 7 , 'database'),
+		(15 , 8 , 'ruby'),
+		(16 , 8 , 'server');
+
+		# 求：既有web标签,又有PHP,同时还标签的书,要用连接查询,比较麻烦
+			select * from tags inner join tags as t on tags.bookid=t.bookid
+			where tags.content='PHP' and t.content='WEB';
+
+		# 换成key-value存储,会简单很多
+			set book:5:title 'PHP sj'
+			set book:6:title 'ruby sz'
+			set book:7:title 'mysql yw'
+			set book:8:title 'ruby server'
+
+			sadd tag:PHP 5
+			sadd tag:WEB 5 6
+			sadd tag:database 7
+			sadd tag:ruby 6 8
+			sadd tag:SERVER 8
+
+		查: 既有PHP,又有WEB的书
+			127.0.0.1:6381> SINTER tag:PHP tag:WEB
+			1) "5"
+
+		查: 有PHP或有WEB标签的书
+			127.0.0.1:6381> SUNION tag:PHP tag:WEB
+			1) "5"
+			2) "6"
+
+		查:含有ruby,不含WEB标签的书
+			127.0.0.1:6381> SDIFF tag:ruby tag:WEB
+			1) "8"
+		关系型数据库转换为kv存储常用原则
+			1: 把表名转换为key前缀,如:"tag:"
+			2: 第2段放置用于区分区key的字段--对应mysql中的主键的列名,如userid
+			3: 第3段放置主键值,如2,3,4...., a , b ,c
+			4: 第4段,写要存储的列名
+			(5: value为具体username的值)
+			举例：用户表 user  , 转换为key-value存储
+				userid		username		password		email
+				  9				  LiSi			 1111111		lisi@163.com
+				set user:userid:9:username LiSi
+				set user:userid:9:password 1111111
+				set user:userid:9:email lisi@163.com
+			PS 无底洞效应
+			
+			问题: 上述user表,如果需要查询username='lisi'的用户,需要怎么做?
+				如果以上述形式存储,只能找出所有user:userid:[id]:username信息,如下
+					user:userid:1:username
+					……
+					user:userid:10000:username
+				然后依次遍历,找出lisi,这种方式肯定是不行的。解决方案,以username建立冗余信息,即:
+					user:username:zhangsan:userid 1
+					……
+					user:username:lisi:userid 9
+					然后通过两次查询:
+						1. 通过get user:username:lisi:userid 获取lisi的userid
+						2. 通过get user:userid:9*获取lisi用户信息
+			
+
+Jedis
+
+	import redis.clients.jedis.Jedis;
+	 
+	public class RedisTest {
+	    public static void main(String[] args) {
+	        //连接本地的 Redis 服务
+	        Jedis jedis = new Jedis("192.168.***.***");
+	        System.out.println("连接成功");
+	        //查看服务是否运行
+	        System.out.println("服务正在运行: "+jedis.ping());
+	    }
+	}
+	开始时报 Connection refused: connect
+	解决方式
+		1/ 将bind 127.0.0.1 改为实际IP(也可以将bind配置完全注释掉,则能接受所有)
+			 bind 192.168.***.***
+			 redis默认只允许本机连接,所以默认bind 127.0.0.1
+		2/ protected-mode 由yes改为no
+			实际生产中肯定不能用这种方式啦
+		
+	微博项目实战
+		功能：
+			注册
+				1/ 接收参数,判断合法性(两次密码是否一致，用户名是否合法)
+				2/ 连接redis,查询用户名是否存在,存在提示已占用
+				3/ 写入redis,完成登录操作
+			登录
