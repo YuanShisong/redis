@@ -522,3 +522,111 @@ Jedis
 				2/ 连接redis,查询用户名是否存在,存在提示已占用
 				3/ 写入redis,完成登录操作
 			登录
+			
+Redis 集群
+	1、集群设计
+		Redis-Cluster采用无中心结构，每个节点保存数据和整个集群状态,每个节点都和其他所有节点连接
+	2、特点：
+		1)所有的redis节点彼此互联(PING-PONG机制),内部使用二进制协议优化传输速度和带宽。
+		2)节点的fail是通过集群中超过半数的节点检测失效时才生效。
+		3)客户端与redis节点直连,不需要中间proxy层.客户端不需要连接集群所有节点,连接集群中任何一个可用节点即可。
+		4)redis-cluster把所有的物理节点映射到[0-16383]slot上（不一定是平均分配）,cluster 负责维护node<->slot<->value。
+		5)Redis集群预分好16384个桶，当需要在 Redis 集群中放置一个 key-value 时，根据 CRC16(key) mod 16384的值，决定将一个key放到哪个桶中
+	
+	3、搭建具体操作
+		集群中至少应该有奇数个节点，所以至少有三个节点，每个节点至少有一个备份节点，所以下面使用6节点
+		1)创建目录 cluster/7000 cluster/7001 cluster/7002 cluster/7003 cluster/7004 cluster/7005 
+		2)每个目录下拷贝一份redis.conf配置文件
+		3)对应修改配置文件:
+			daemonize yes #后台启动
+			port 7000 #修改端口号，从7000到7005
+			cluster-enabled yes #开启cluster
+			cluster-config-file nodes-7000.conf
+			cluster-node-timeout 5000 #节点5秒钟后连接不上，会被集群认为故障
+			appendonly yes #开启aof
+		4)拷贝src/redis-trib.rb 至cluster目录下
+		5)安装ruby环境
+			1 # apt install ruby
+			2 # apt-get install rubygems
+			3 # wget https://rubygems.global.ssl.fastly.net/gems/redis-3.2.2.gem
+			  # gem install redis-3.2.2.gem
+		6)创建集群
+			1 # ./redis-trib.rb create --replicas 1 127.0.0.1:7001 127.0.0.1:7002 127.0.0.1:7003 127.0.0.1:7004 127.0.0.1:7005 127.0.0.1:7006
+				命令的意义如下：
+					给定 redis-trib.rb 程序的命令是 create ， 这表示我们希望创建一个新的集群。
+					选项 --replicas 1 表示我们希望为集群中的每个主节点创建一个从节点。
+					之后跟着的其他参数则是实例的地址列表， 我们希望程序使用这些地址所指示的实例来创建新集群。
+				简单来说， 以上命令的意思就是让 redis-trib 程序创建一个包含三个主节点和三个从节点的集群
+			
+			2 接着redis-trib 会打印出一份预想中的配置给你看， 如果你觉得没问题的话， 就可以输入 yes ， redis-trib 就会将这份配置应用到集群当中
+				-------------------------------------------------------------
+				root@josh-ubuntu:/usr/local/redis-4.0.8/cluster# ./redis-trib.rb create --replicas 1 127.0.0.1:7000 127.0.0.1:7001 127.0.0.1:7002 127.0.0.1:7003 127.0.0.1:7004 127.0.0.1:7005
+				>>> Creating cluster
+				>>> Performing hash slots allocation on 6 nodes...
+				Using 3 masters:
+				127.0.0.1:7000
+				127.0.0.1:7001
+				127.0.0.1:7002
+				Adding replica 127.0.0.1:7004 to 127.0.0.1:7000
+				Adding replica 127.0.0.1:7005 to 127.0.0.1:7001
+				Adding replica 127.0.0.1:7003 to 127.0.0.1:7002
+				>>> Trying to optimize slaves allocation for anti-affinity
+				[WARNING] Some slaves are in the same host as their master
+				M: 3739dd73a559627aeadb19e14826edf0ecb77230 127.0.0.1:7000
+				   slots:0-5460 (5461 slots) master
+				M: 11e6c87ed32aecdbf1c26e11945018bbfbdac508 127.0.0.1:7001
+				   slots:5461-10922 (5462 slots) master
+				M: 651df59d5f3c11c12708e599e63b3f7556458e0d 127.0.0.1:7002
+				   slots:10923-16383 (5461 slots) master
+				S: 79da4a04ffa828155aa4ffdb27fdab000c3996db 127.0.0.1:7003
+				   replicates 651df59d5f3c11c12708e599e63b3f7556458e0d
+				S: 2c03adff19706e771bc5fd93367587b5ae34d59c 127.0.0.1:7004
+				   replicates 3739dd73a559627aeadb19e14826edf0ecb77230
+				S: acd7694a60e9a09b8a4366b5f0364201fdd20799 127.0.0.1:7005
+				   replicates 11e6c87ed32aecdbf1c26e11945018bbfbdac508
+				Can I set the above configuration? (type 'yes' to accept): yes
+				-------------------------------------------------------------
+			3 输入 yes 并按下回车确认之后， 集群就会将配置应用到各个节点， 并连接起（join）各个节点 —— 也即是， 让各个节点开始互相通讯
+				-------------------------------------------------------------
+				>>> Nodes configuration updated
+				>>> Assign a different config epoch to each node
+				>>> Sending CLUSTER MEET messages to join the cluster
+				Waiting for the cluster to join...
+				>>> Performing Cluster Check (using node 127.0.0.1:7000)
+				M: 3739dd73a559627aeadb19e14826edf0ecb77230 127.0.0.1:7000
+				   slots:0-5460 (5461 slots) master
+				   1 additional replica(s)
+				S: acd7694a60e9a09b8a4366b5f0364201fdd20799 127.0.0.1:7005
+				   slots: (0 slots) slave
+				   replicates 11e6c87ed32aecdbf1c26e11945018bbfbdac508
+				M: 651df59d5f3c11c12708e599e63b3f7556458e0d 127.0.0.1:7002
+				   slots:10923-16383 (5461 slots) master
+				   1 additional replica(s)
+				S: 2c03adff19706e771bc5fd93367587b5ae34d59c 127.0.0.1:7004
+				   slots: (0 slots) slave
+				   replicates 3739dd73a559627aeadb19e14826edf0ecb77230
+				S: 79da4a04ffa828155aa4ffdb27fdab000c3996db 127.0.0.1:7003
+				   slots: (0 slots) slave
+				   replicates 651df59d5f3c11c12708e599e63b3f7556458e0d
+				M: 11e6c87ed32aecdbf1c26e11945018bbfbdac508 127.0.0.1:7001
+				   slots:5461-10922 (5462 slots) master
+				   1 additional replica(s)
+				[OK] All nodes agree about slots configuration.
+				>>> Check for open slots...
+				>>> Check slots coverage...
+				[OK] All 16384 slots covered.
+				-------------------------------------------------------------
+	4、测试
+		1) 登录7000节点, 设置key-value, 被放在7001上, 而且自动重定向到7001节点, 重新登录7000, 获取此key, 自动跳转到7001
+			joshua@josh-ubuntu:~$ redis-cli -c -p 7000
+			127.0.0.1:7000> set name joshua
+			-> Redirected to slot [5798] located at 127.0.0.1:7001
+			OK
+			127.0.0.1:7001> get name
+			"joshua"
+			127.0.0.1:7001> quit
+			joshua@josh-ubuntu:~$ redis-cli -c -p 7000
+			127.0.0.1:7000> get name
+			-> Redirected to slot [5798] located at 127.0.0.1:7001
+			"joshua"
+			127.0.0.1:7001>
