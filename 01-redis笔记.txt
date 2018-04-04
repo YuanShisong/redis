@@ -535,13 +535,13 @@ Redis 集群
 	
 	3、搭建具体操作
 		集群中至少应该有奇数个节点，所以至少有三个节点，每个节点至少有一个备份节点，所以下面使用6节点
-		1)创建目录 cluster/7000 cluster/7001 cluster/7002 cluster/7003 cluster/7004 cluster/7005 
+		1)创建目录 # mkdir cluster/{7000,7001,7002,7003,7004,7005} -p
 		2)每个目录下拷贝一份redis.conf配置文件
 		3)对应修改配置文件:
 			daemonize yes #后台启动
 			port 7000 #修改端口号，从7000到7005
 			cluster-enabled yes #开启cluster
-			cluster-config-file nodes-7000.conf
+			cluster-config-file 7000/nodes.conf
 			cluster-node-timeout 5000 #节点5秒钟后连接不上，会被集群认为故障
 			appendonly yes #开启aof
 		4)拷贝src/redis-trib.rb 至cluster目录下
@@ -551,7 +551,7 @@ Redis 集群
 			3 # wget https://rubygems.global.ssl.fastly.net/gems/redis-3.2.2.gem
 			  # gem install redis-3.2.2.gem
 		6)创建集群
-			1 # ./redis-trib.rb create --replicas 1 127.0.0.1:7001 127.0.0.1:7002 127.0.0.1:7003 127.0.0.1:7004 127.0.0.1:7005 127.0.0.1:7006
+			1 # ./redis-trib.rb create --replicas 1 127.0.0.1:7000 127.0.0.1:7001 127.0.0.1:7002 127.0.0.1:7003 127.0.0.1:7004 127.0.0.1:7005
 				命令的意义如下：
 					给定 redis-trib.rb 程序的命令是 create ， 这表示我们希望创建一个新的集群。
 					选项 --replicas 1 表示我们希望为集群中的每个主节点创建一个从节点。
@@ -616,7 +616,30 @@ Redis 集群
 				>>> Check slots coverage...
 				[OK] All 16384 slots covered.
 				-------------------------------------------------------------
-	4、测试
+	4、常见错误
+		所有节点(主 从)都必须配置为cluster node
+		root@joshua-ubuntu:/usr/local/redis-4.0.8/clusterdir# redis-trib.rb create --replicas 1 192.168.212.180:7000 192.168.212.180:7001 192.168.212.180:7002 192.168.212.180:7003 192.168.212.180:7004 192.168.212.180:7005
+		>>> Creating cluster
+		[ERR] Node 192.168.212.180:7003 is not configured as a cluster node.
+
+
+		至少需要6个节点
+		root@joshua-ubuntu:/usr/local/redis-4.0.8/clusterdir# redis-trib.rb create --replicas 1 192.168.212.180:7000 192.168.212.180:7001 192.168.212.180:7002
+		>>> Creating cluster
+		*** ERROR: Invalid configuration for cluster creation.
+		*** Redis Cluster requires at least 3 master nodes.
+		*** This is not possible with 3 nodes and 1 replicas per node.
+		*** At least 6 nodes are required.
+
+		集群模式下不能配置为从节点
+		root@joshua-ubuntu:/usr/local/redis-4.0.8/clusterdir# redis-server 7003/redis.conf 
+
+		*** FATAL CONFIG FILE ERROR ***
+		Reading the configuration file, at line 281
+		>>> 'slaveof 127.0.0.1 7000'
+		slaveof directive not allowed in cluster mode
+		
+	5、测试
 		1) 登录7000节点, 设置key-value, 被放在7001上, 而且自动重定向到7001节点, 重新登录7000, 获取此key, 自动跳转到7001
 			joshua@josh-ubuntu:~$ redis-cli -c -p 7000
 			127.0.0.1:7000> set name joshua
@@ -630,3 +653,148 @@ Redis 集群
 			-> Redirected to slot [5798] located at 127.0.0.1:7001
 			"joshua"
 			127.0.0.1:7001>
+		2) 挂掉一个master节点
+			关系如下：
+				M: 3d4c58df54d7f35eb3081541b769dba193850e7d 127.0.0.1:7000
+				   slots:0-5460 (5461 slots) master
+				   1 additional replica(s)
+				S: 9f061bb4493400a18a236b139445dab4de9385d5 127.0.0.1:7003
+				   slots: (0 slots) slave
+				   replicates 1ef23f9e5ad4b67325038f820fe44e29a93b1397
+				S: 03519b3456f1abb8e693b6f16171a16b86b2503a 127.0.0.1:7004
+				   slots: (0 slots) slave
+				   replicates 2b27866c8e249af539e1fa0f28667908513dc8c3
+				M: 2b27866c8e249af539e1fa0f28667908513dc8c3 127.0.0.1:7002
+				   slots:10923-16383 (5461 slots) master
+				   1 additional replica(s)
+				M: 1ef23f9e5ad4b67325038f820fe44e29a93b1397 127.0.0.1:7001
+				   slots:5461-10922 (5462 slots) master
+				   1 additional replica(s)
+				S: cc208c4e335c4efd0de5ac03eed82071ce4bc7ad 127.0.0.1:7005
+				   slots: (0 slots) slave
+				   replicates 3d4c58df54d7f35eb3081541b769dba193850e7d
+			现在挂掉7001节点，7001的从节点是7003，
+				# ./redis-trib.rb check 127.0.0.1:7001
+				>>> Performing Cluster Check (using node 127.0.0.1:7001)
+				M: 1ef23f9e5ad4b67325038f820fe44e29a93b1397 127.0.0.1:7001
+				   slots:5461-10922 (5462 slots) master
+				   1 additional replica(s)
+				M: 2b27866c8e249af539e1fa0f28667908513dc8c3 127.0.0.1:7002
+				   slots:10923-16383 (5461 slots) master
+				   1 additional replica(s)
+				S: 03519b3456f1abb8e693b6f16171a16b86b2503a 127.0.0.1:7004
+				   slots: (0 slots) slave
+				   replicates 2b27866c8e249af539e1fa0f28667908513dc8c3
+				M: 3d4c58df54d7f35eb3081541b769dba193850e7d 127.0.0.1:7000
+				   slots:0-5460 (5461 slots) master
+				   1 additional replica(s)
+				S: 9f061bb4493400a18a236b139445dab4de9385d5 127.0.0.1:7003
+				   slots: (0 slots) slave
+				   replicates 1ef23f9e5ad4b67325038f820fe44e29a93b1397
+				S: cc208c4e335c4efd0de5ac03eed82071ce4bc7ad 127.0.0.1:7005
+				   slots: (0 slots) slave
+				   replicates 3d4c58df54d7f35eb3081541b769dba193850e7d
+				[OK] All nodes agree about slots configuration.
+				>>> Check for open slots...
+				>>> Check slots coverage...
+				[OK] All 16384 slots covered.
+				
+				# kill -9 21788
+				
+				# ./redis-trib.rb check 127.0.0.1:7001
+				[ERR] Sorry, can't connect to node 127.0.0.1:7001
+				
+				# ./redis-trib.rb check 127.0.0.1:7003
+				>>> Performing Cluster Check (using node 127.0.0.1:7003)
+				M: 9f061bb4493400a18a236b139445dab4de9385d5 127.0.0.1:7003
+				   slots:5461-10922 (5462 slots) master
+				   0 additional replica(s)
+				S: 03519b3456f1abb8e693b6f16171a16b86b2503a 127.0.0.1:7004
+				   slots: (0 slots) slave
+				   replicates 2b27866c8e249af539e1fa0f28667908513dc8c3
+				S: cc208c4e335c4efd0de5ac03eed82071ce4bc7ad 127.0.0.1:7005
+				   slots: (0 slots) slave
+				   replicates 3d4c58df54d7f35eb3081541b769dba193850e7d
+				M: 3d4c58df54d7f35eb3081541b769dba193850e7d 127.0.0.1:7000
+				   slots:0-5460 (5461 slots) master
+				   1 additional replica(s)
+				M: 2b27866c8e249af539e1fa0f28667908513dc8c3 127.0.0.1:7002
+				   slots:10923-16383 (5461 slots) master
+				   1 additional replica(s)
+				[OK] All nodes agree about slots configuration.
+				>>> Check for open slots...
+				>>> Check slots coverage...
+				[OK] All 16384 slots covered.
+				
+				可以看到集群链接不到7001节点，而原7002的从节点7003转换为主节点
+		
+		3) 加两个节点
+			杀掉所有redis进程 
+				# pkill -9 redis
+			将节点全部启动 
+				# ps -ef|grep redis
+				root      24655      1  0 14:00 ?        00:00:00 redis-server 127.0.0.1:7000 [cluster]
+				root      24657      1  0 14:00 ?        00:00:00 redis-server 127.0.0.1:7001 [cluster]
+				root      24662      1  0 14:00 ?        00:00:00 redis-server 127.0.0.1:7002 [cluster]
+				root      24667      1  0 14:00 ?        00:00:00 redis-server 127.0.0.1:7003 [cluster]
+				root      24675      1  0 14:00 ?        00:00:00 redis-server 127.0.0.1:7004 [cluster]
+				root      24680      1  0 14:00 ?        00:00:00 redis-server 127.0.0.1:7005 [cluster]
+				root      24685      1  0 14:00 ?        00:00:00 redis-server 127.0.0.1:7006 [cluster]
+				root      24690      1  0 14:00 ?        00:00:00 redis-server 127.0.0.1:7007 [cluster]
+				root      24730  14720  0 14:01 pts/9    00:00:00 grep --color=auto redis
+			创建集群
+				# ./redis-trib.rb create --replicas 1 127.0.0.1:7000 127.0.0.1:7001 127.0.0.1:7002 127.0.0.1:7003 127.0.0.1:7004 127.0.0.1:7005 127.0.0.1:7006 127.0.0.1:7007
+				>>> Creating cluster
+				[ERR] Node 127.0.0.1:7000 is not empty. Either the node already knows other nodes (check with CLUSTER NODES) or contains some key in database 0.
+				提示很明确了
+					可能原因1 原集群中已存在数据，杀掉redis进程, 删除rdb和aof文件, 再试还是同样报错。
+					可能原因2 节点已知其他节点，也就是说已经配置过集群,并写入配置文件中,现在创建的集群和配置文件(即配置:cluster-config-file 7000/nodes.conf)中集群关系不一致
+						将之前的配置文件全部删除, 重新创建集群果然成功
+						顺便提一下nodes.conf内容：
+						创建集群时,如果没问题会询问你是否同意默认配置,如果同意就会将配置写入磁盘中(cluster-config-file 7000/nodes.conf), 先输入no看一下nodes.conf文件内容
+							Can I set the above configuration? (type 'yes' to accept): no
+							*** Aborting...
+							
+							root@joshua-ubuntu:/usr/local/redis-4.0.9/cluster# cat 7001/nodes.conf
+							533019a36d0453c4c95dc3d58a7cce5301435965 :0@0 myself,master - 0 0 0 connected
+							vars currentEpoch 0 lastVoteEpoch 0
+							root@joshua-ubuntu:/usr/local/redis-4.0.9/cluster# cat 7000/nodes.conf
+							0c6cc3f0d49e5d50b45cd3b6c98b386f9878bf34 :0@0 myself,master - 0 0 0 connected
+							vars currentEpoch 0 lastVoteEpoch 0
+						只写了当前节点的唯一标识符, 而且此时每一个都是master，因为你没有同意默认配置，下面重新创建，并同意配置，再看文件内容
+							root@joshua-ubuntu:/usr/local/redis-4.0.9/cluster# cat 7006/nodes.conf
+							55d4fb840b5c7af4817117592e277e2e5d6989b9 127.0.0.1:7003@17003 master - 0 1522822868620 4 connected 12288-16383
+							4bd0557145357ffbaf76796438896ec926183f91 127.0.0.1:7002@17002 master - 0 1522822869000 3 connected 8192-12181 12183-12287
+							e146b60389c85f1034c28373ec6fb0e3e0568b5a 127.0.0.1:7006@17006 myself,slave 533019a36d0453c4c95dc3d58a7cce5301435965 0 1522822866000 7 connected
+							1b4eabae64d598261c97d1511745b413ad01470f 127.0.0.1:7005@17005 slave 0c6cc3f0d49e5d50b45cd3b6c98b386f9878bf34 0 1522822868000 6 connected
+							533019a36d0453c4c95dc3d58a7cce5301435965 127.0.0.1:7001@17001 master - 0 1522822868519 2 connected 4096-8191
+							0c6cc3f0d49e5d50b45cd3b6c98b386f9878bf34 127.0.0.1:7000@17000 master - 0 1522822869125 1 connected 0-4095
+							97bbedd05b7eeb073faf4b59c42e7bfa66387ea4 127.0.0.1:7004@17004 slave 55d4fb840b5c7af4817117592e277e2e5d6989b9 0 1522822868000 5 connected
+							a6b2ad1bc5da0869caee1f4c499c88a625f629a8 127.0.0.1:7007@17007 master - 0 1522822868116 8 connected 12182
+							vars currentEpoch 8 lastVoteEpoch 0
+						7006是7001的slave 而且每一个配置文件中都列出了所有的M-S关系
+			
+		4) 添加节点并分配哈希槽
+			1 添加节点127.0.0.1:7006
+				# ./redis-trib.rb add-node 127.0.0.1:7006 127.0.0.1:7005
+			2 给节点127.0.0.1:7006分配哈希槽
+				# ./redis-trib.rb reshard 127.0.0.1:7006
+				需要交互 指定分配多少哈希槽给7006 哈希槽来自于哪些节点 
+			3 给新加的节点分配添加从节点
+				# ./redis-trib.rb add-node --slave 127.0.0.1:7007 127.0.0.1:7006
+		
+				
+卸载删除 ubuntu下如何卸载删除redis
+	查看安装的软件 dpkg -l| grep redis
+	使用apt-get安装
+		直接通过以下命令卸载 sudo apt-get purge --auto-remove redis-server
+	使用make安装，手动删除相关文件
+		1/停服务 sudo service redis_6379 stop
+		2/删除redis-server相关文件 sudo rm /usr/local/bin/redis-*
+		3/删除相关配置文件 sudo rm -r /etc/redis/
+		4/删除日志文件 sudo rm /var/log/redis_*
+		5/删除lib sudo rm -r /var/lib/redis/
+		6/删除启动相关脚本 sudo rm /etc/init.d/redis_*
+		7/删除PID文件 sudo rm /var/run/redis_*
+		8/重启ubuntu
+	参考：http://grainier.net/how-to-uninstall-redis-server-from-ubuntu/
