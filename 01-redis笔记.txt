@@ -493,7 +493,91 @@ key设计原则
 						1. 通过get user:username:lisi:userid 获取lisi的userid
 						2. 通过get user:userid:9*获取lisi用户信息
 			
-
+Redis 集群规范 http://doc.redisfans.com/topic/cluster-spec.html
+	节点握手 
+		要让一个节点承认另一个节点同属于一个集群， 只有以下两种方法：
+			一个节点可以通过向另一个节点发送 MEET 信息， 来强制让接收信息的节点承认发送信息的节点为集群中的一份子。 一个节点仅在管理员显式地向它发送 CLUSTER MEET ip port 命令时， 才会向另一个节点发送 MEET 信息。
+			另外， 如果一个可信节点向另一个节点传播第三者节点的信息， 那么接收信息的那个节点也会将第三者节点识别为集群中的一份子。 也即是说， 如果 A 认识 B ， B 认识 C ， 并且 B 向 A 传播关于 C 的信息， 那么 A 也会将 C 识别为集群中的一份子， 并尝试连接 C 。
+		测试：搭建一个6个节点的集群(7008 7009 7010 7011 7012 7013)，和已有集群(7000 7001 7002 7003 7004 7005)握手
+			1、新集群节点写好配置文件启动，创建集群# ./redis-trib.rb create --replicas 1 127.0.0.1:7008 127.0.0.1:7009 127.0.0.1:7010 127.0.0.1:7011 127.0.0.1:7012 127.0.0.1:7013 
+			2、查看两个集群节点配置
+				# cat 7010/nodes.conf 
+				34ff82e58cb5adbcb2757899ff2b8b254d454ada 127.0.0.1:7009@17009 master - 0 1522943200341 2 connected 5461-10922
+				1ff195622d9e9918241d27f44a41bb1a65d2558f 127.0.0.1:7011@17011 slave b8bcc0b4dc03e529b1a87c087c247215a90a9fe0 0 1522943200543 4 connected
+				b8bcc0b4dc03e529b1a87c087c247215a90a9fe0 127.0.0.1:7010@17010 myself,master - 0 1522943199000 3 connected 10923-16383
+				6e1422dab30e0f0056f06d22136d151ee58a135a 127.0.0.1:7008@17008 master - 0 1522943199837 1 connected 0-5460
+				9543becf5736a4e6b825cfab7c2c5c42b5ee9b4f 127.0.0.1:7013@17013 slave 34ff82e58cb5adbcb2757899ff2b8b254d454ada 0 1522943199332 6 connected
+				db5abc1446ce7995eb8ab4cd861ab3eea70f30a7 127.0.0.1:7012@17012 slave 6e1422dab30e0f0056f06d22136d151ee58a135a 0 1522943200000 5 connected
+				vars currentEpoch 6 lastVoteEpoch 0
+				# cat 7000/nodes.conf 
+				e2e5cdbb12db31e703a8e6aa6374fc1a0381808b 127.0.0.1:7002@17002 master - 0 1522936744000 9 connected 5478-5494 10923-16383
+				bd54ca756fa4ed2d55641bcc22cbac6a229708c0 127.0.0.1:7005@17005 slave 11c13986a88770dd04051174d596a7222f7e0146 0 1522936744000 8 connected
+				04069659c350a8fc2cd1223ac860b99208e65caf 127.0.0.1:7001@17001 master - 0 1522936743592 2 connected 5495-10922
+				9d8b70a991d7b3ef06152d1be5ea94c1fd24ebb1 127.0.0.1:7003@17003 slave 04069659c350a8fc2cd1223ac860b99208e65caf 0 1522936744097 4 connected
+				3e9146c8e5f516b165449feb00a327d0e4e51f9d 127.0.0.1:7004@17004 slave e2e5cdbb12db31e703a8e6aa6374fc1a0381808b 0 1522936745000 9 connected
+				11c13986a88770dd04051174d596a7222f7e0146 127.0.0.1:7000@17000 myself,master - 0 1522936744000 8 connected 0-5477
+				vars currentEpoch 9 lastVoteEpoch 0
+			3、握手 # redis-cli -c -p 7000 cluster meet 127.0.0.1 7010
+				OK
+			4、重新查看节点配置
+				# cat 7000/nodes.conf 
+				db5abc1446ce7995eb8ab4cd861ab3eea70f30a7 127.0.0.1:7012@17012 slave 11c13986a88770dd04051174d596a7222f7e0146 0 1522943315591 8 connected
+				bd54ca756fa4ed2d55641bcc22cbac6a229708c0 127.0.0.1:7005@17005 slave 11c13986a88770dd04051174d596a7222f7e0146 0 1522943316076 8 connected
+				e2e5cdbb12db31e703a8e6aa6374fc1a0381808b 127.0.0.1:7002@17002 master - 0 1522943315000 9 connected 5478-5494 10923-16383
+				34ff82e58cb5adbcb2757899ff2b8b254d454ada 127.0.0.1:7009@17009 master - 0 1522943315000 2 connected
+				6e1422dab30e0f0056f06d22136d151ee58a135a 127.0.0.1:7008@17008 master - 0 1522943314000 1 connected
+				9543becf5736a4e6b825cfab7c2c5c42b5ee9b4f 127.0.0.1:7013@17013 slave 34ff82e58cb5adbcb2757899ff2b8b254d454ada 0 1522943315671 2 connected
+				3e9146c8e5f516b165449feb00a327d0e4e51f9d 127.0.0.1:7004@17004 slave e2e5cdbb12db31e703a8e6aa6374fc1a0381808b 0 1522943315000 9 connected
+				1ff195622d9e9918241d27f44a41bb1a65d2558f 127.0.0.1:7011@17011 slave b8bcc0b4dc03e529b1a87c087c247215a90a9fe0 0 1522943315571 3 connected
+				b8bcc0b4dc03e529b1a87c087c247215a90a9fe0 127.0.0.1:7010@17010 slave e2e5cdbb12db31e703a8e6aa6374fc1a0381808b 0 1522943314666 9 connected
+				04069659c350a8fc2cd1223ac860b99208e65caf 127.0.0.1:7001@17001 master - 0 1522943315000 10 connected 5495-10922
+				9d8b70a991d7b3ef06152d1be5ea94c1fd24ebb1 127.0.0.1:7003@17003 slave 04069659c350a8fc2cd1223ac860b99208e65caf 0 1522943315000 10 connected
+				11c13986a88770dd04051174d596a7222f7e0146 127.0.0.1:7000@17000 myself,master - 0 1522943315000 8 connected 0-5477
+				vars currentEpoch 10 lastVoteEpoch 0
+			5、查看哈希槽和M-S分配
+				# ./redis-trib.rb check 127.0.0.1:7000
+				>>> Performing Cluster Check (using node 127.0.0.1:7000)
+				M: 11c13986a88770dd04051174d596a7222f7e0146 127.0.0.1:7000
+				   slots:0-5477 (5478 slots) master
+				   3 additional replica(s)
+				S: db5abc1446ce7995eb8ab4cd861ab3eea70f30a7 127.0.0.1:7012
+				   slots: (0 slots) slave
+				   replicates 11c13986a88770dd04051174d596a7222f7e0146
+				S: bd54ca756fa4ed2d55641bcc22cbac6a229708c0 127.0.0.1:7005
+				   slots: (0 slots) slave
+				   replicates 11c13986a88770dd04051174d596a7222f7e0146
+				M: e2e5cdbb12db31e703a8e6aa6374fc1a0381808b 127.0.0.1:7002
+				   slots:5478-5494,10923-16383 (5478 slots) master
+				   3 additional replica(s)
+				S: 34ff82e58cb5adbcb2757899ff2b8b254d454ada 127.0.0.1:7009
+				   slots: (0 slots) slave
+				   replicates e2e5cdbb12db31e703a8e6aa6374fc1a0381808b
+				S: 6e1422dab30e0f0056f06d22136d151ee58a135a 127.0.0.1:7008
+				   slots: (0 slots) slave
+				   replicates 11c13986a88770dd04051174d596a7222f7e0146
+				S: 9543becf5736a4e6b825cfab7c2c5c42b5ee9b4f 127.0.0.1:7013
+				   slots: (0 slots) slave
+				   replicates 34ff82e58cb5adbcb2757899ff2b8b254d454ada
+				S: 3e9146c8e5f516b165449feb00a327d0e4e51f9d 127.0.0.1:7004
+				   slots: (0 slots) slave
+				   replicates e2e5cdbb12db31e703a8e6aa6374fc1a0381808b
+				S: 1ff195622d9e9918241d27f44a41bb1a65d2558f 127.0.0.1:7011
+				   slots: (0 slots) slave
+				   replicates b8bcc0b4dc03e529b1a87c087c247215a90a9fe0
+				S: b8bcc0b4dc03e529b1a87c087c247215a90a9fe0 127.0.0.1:7010
+				   slots: (0 slots) slave
+				   replicates e2e5cdbb12db31e703a8e6aa6374fc1a0381808b
+				M: 04069659c350a8fc2cd1223ac860b99208e65caf 127.0.0.1:7001
+				   slots:5495-10922 (5428 slots) master
+				   1 additional replica(s)
+				S: 9d8b70a991d7b3ef06152d1be5ea94c1fd24ebb1 127.0.0.1:7003
+				   slots: (0 slots) slave
+				   replicates 04069659c350a8fc2cd1223ac860b99208e65caf
+				[OK] All nodes agree about slots configuration.
+				>>> Check for open slots...
+				>>> Check slots coverage...
+				[OK] All 16384 slots covered.
+				发现加上去的节点都是从节点，没有分配哈希槽。
 Jedis
 
 	import redis.clients.jedis.Jedis;
@@ -773,17 +857,212 @@ Redis 集群
 							a6b2ad1bc5da0869caee1f4c499c88a625f629a8 127.0.0.1:7007@17007 master - 0 1522822868116 8 connected 12182
 							vars currentEpoch 8 lastVoteEpoch 0
 						7006是7001的slave 而且每一个配置文件中都列出了所有的M-S关系
+			以上手动加的方式是错误的[大哭]，上边的操作不是加节点了，而是把数据抹除然后以8个节点重新创建集群，应该用redis-trib.rb添加节点
 			
-		4) 添加节点并分配哈希槽
-			1 添加节点127.0.0.1:7006
-				# ./redis-trib.rb add-node 127.0.0.1:7006 127.0.0.1:7005
-			2 给节点127.0.0.1:7006分配哈希槽
-				# ./redis-trib.rb reshard 127.0.0.1:7006
-				需要交互 指定分配多少哈希槽给7006 哈希槽来自于哪些节点 
-			3 给新加的节点分配添加从节点
-				# ./redis-trib.rb add-node --slave 127.0.0.1:7007 127.0.0.1:7006
-		
-				
+		4) 添加节点并分配哈希槽 使用redis-trib.rb工具
+			首先看一下redis-trib.rb使用说明
+				root@josh-ubuntu:/usr/local/redis-4.0.8/cluster# ./redis-trib.rb 
+				Usage: redis-trib <command> <options> <arguments ...>
+
+				  create          host1:port1 ... hostN:portN
+								  --replicas <arg>
+				  check           host:port
+				  info            host:port
+				  fix             host:port
+								  --timeout <arg>
+				  reshard         host:port
+								  --from <arg>
+								  --to <arg>
+								  --slots <arg>
+								  --yes
+								  --timeout <arg>
+								  --pipeline <arg>
+				  rebalance       host:port
+								  --weight <arg>
+								  --auto-weights
+								  --use-empty-masters
+								  --timeout <arg>
+								  --simulate
+								  --pipeline <arg>
+								  --threshold <arg>
+				  add-node        new_host:new_port existing_host:existing_port
+								  --slave
+								  --master-id <arg>
+				  del-node        host:port node_id
+				  set-timeout     host:port milliseconds
+				  call            host:port command arg arg .. arg
+				  import          host:port
+								  --from <arg>
+								  --copy
+								  --replace
+				  help            (show this help)
+				For check, fix, reshard, del-node, set-timeout you can specify the host and port of any working node in the cluster.
+			i 添加节点127.0.0.1:7006, 使用命令add-node new_host:new_port existing_host:existing_port
+				root@josh-ubuntu:/usr/local/redis-4.0.8/cluster# ./redis-trib.rb add-node 127.0.0.1:7006 127.0.0.1:7005
+				>>> Adding node 127.0.0.1:7006 to cluster 127.0.0.1:7005
+				>>> Performing Cluster Check (using node 127.0.0.1:7005)
+				S: bd54ca756fa4ed2d55641bcc22cbac6a229708c0 127.0.0.1:7005
+				   slots: (0 slots) slave
+				   replicates 11c13986a88770dd04051174d596a7222f7e0146
+				M: 04069659c350a8fc2cd1223ac860b99208e65caf 127.0.0.1:7001
+				   slots:5461-10922 (5462 slots) master
+				   1 additional replica(s)
+				M: 11c13986a88770dd04051174d596a7222f7e0146 127.0.0.1:7000
+				   slots:0-5460 (5461 slots) master
+				   1 additional replica(s)
+				S: 9d8b70a991d7b3ef06152d1be5ea94c1fd24ebb1 127.0.0.1:7003
+				   slots: (0 slots) slave
+				   replicates 04069659c350a8fc2cd1223ac860b99208e65caf
+				M: e2e5cdbb12db31e703a8e6aa6374fc1a0381808b 127.0.0.1:7002
+				   slots:10923-16383 (5461 slots) master
+				   1 additional replica(s)
+				S: 3e9146c8e5f516b165449feb00a327d0e4e51f9d 127.0.0.1:7004
+				   slots: (0 slots) slave
+				   replicates e2e5cdbb12db31e703a8e6aa6374fc1a0381808b
+				[OK] All nodes agree about slots configuration.
+				>>> Check for open slots...
+				>>> Check slots coverage...
+				[OK] All 16384 slots covered.
+				>>> Send CLUSTER MEET to node 127.0.0.1:7006 to make it join the cluster.
+				[OK] New node added correctly.
+			ii 给节点127.0.0.1:7006分配哈希槽
+				命令格式./redis-trib.rb reshard host:port
+                  --from <arg>
+                  --to <arg>
+                  --slots <arg>
+                  --yes
+                  --timeout <arg>
+                  --pipeline <arg>
+				需要交互 指定分配多少哈希槽给7006 哈希槽来自于哪些节点
+					root@josh-ubuntu:/usr/local/redis-4.0.8/cluster# ./redis-trib.rb reshard 127.0.0.1:7006
+					>>> Performing Cluster Check (using node 127.0.0.1:7006)
+					M: 1dbda38d8aa67f192017a8e7a60af8bf76b34815 127.0.0.1:7006
+					   slots: (0 slots) master
+					   0 additional replica(s)
+					M: e2e5cdbb12db31e703a8e6aa6374fc1a0381808b 127.0.0.1:7002
+					   slots:10923-16383 (5461 slots) master
+					   1 additional replica(s)
+					S: 3e9146c8e5f516b165449feb00a327d0e4e51f9d 127.0.0.1:7004
+					   slots: (0 slots) slave
+					   replicates e2e5cdbb12db31e703a8e6aa6374fc1a0381808b
+					M: 04069659c350a8fc2cd1223ac860b99208e65caf 127.0.0.1:7001
+					   slots:5461-10922 (5462 slots) master
+					   1 additional replica(s)
+					S: bd54ca756fa4ed2d55641bcc22cbac6a229708c0 127.0.0.1:7005
+					   slots: (0 slots) slave
+					   replicates 11c13986a88770dd04051174d596a7222f7e0146
+					S: 9d8b70a991d7b3ef06152d1be5ea94c1fd24ebb1 127.0.0.1:7003
+					   slots: (0 slots) slave
+					   replicates 04069659c350a8fc2cd1223ac860b99208e65caf
+					M: 11c13986a88770dd04051174d596a7222f7e0146 127.0.0.1:7000
+					   slots:0-5460 (5461 slots) master
+					   1 additional replica(s)
+					[OK] All nodes agree about slots configuration.
+					>>> Check for open slots...
+					>>> Check slots coverage...
+					[OK] All 16384 slots covered.
+					How many slots do you want to move (from 1 to 16384)? 100 # 分配多少哈希槽
+					What is the receiving node ID? 1dbda38d8aa67f192017a8e7a60af8bf76b34815
+					Please enter all the source node IDs.
+					  Type 'all' to use all the nodes as source nodes for the hash slots.
+					  Type 'done' once you entered all the source nodes IDs.
+					Source node #1:all # 哈希槽来自于哪些节点
+
+					Ready to move 100 slots.
+					  Source nodes:
+						M: e2e5cdbb12db31e703a8e6aa6374fc1a0381808b 127.0.0.1:7002
+					   slots:10923-16383 (5461 slots) master
+					   1 additional replica(s)
+						M: 04069659c350a8fc2cd1223ac860b99208e65caf 127.0.0.1:7001
+					   slots:5461-10922 (5462 slots) master
+					   1 additional replica(s)
+						M: 11c13986a88770dd04051174d596a7222f7e0146 127.0.0.1:7000
+					   slots:0-5460 (5461 slots) master
+					   1 additional replica(s)
+					  Destination node:
+						M: 1dbda38d8aa67f192017a8e7a60af8bf76b34815 127.0.0.1:7006
+					   slots: (0 slots) master
+					   0 additional replica(s)
+					  Resharding plan:
+						Moving slot 5461 from 04069659c350a8fc2cd1223ac860b99208e65caf
+						Moving slot 5462 from 04069659c350a8fc2cd1223ac860b99208e65caf
+						……
+					    Moving slot 30 from 11c13986a88770dd04051174d596a7222f7e0146
+						Moving slot 31 from 11c13986a88770dd04051174d596a7222f7e0146
+						Moving slot 32 from 11c13986a88770dd04051174d596a7222f7e0146
+					Do you want to proceed with the proposed reshard plan (yes/no)? yes # 是否同意以上
+					Moving slot 5461 from 127.0.0.1:7001 to 127.0.0.1:7006: 
+					Moving slot 5462 from 127.0.0.1:7001 to 127.0.0.1:7006: 
+					Moving slot 5463 from 127.0.0.1:7001 to 127.0.0.1:7006: 
+					……
+				查看集群信息，可以看到7006有100个哈希槽
+				root@josh-ubuntu:/usr/local/redis-4.0.8/cluster# ./redis-trib.rb check 127.0.0.1:7006
+				>>> Performing Cluster Check (using node 127.0.0.1:7006)
+				M: 1dbda38d8aa67f192017a8e7a60af8bf76b34815 127.0.0.1:7006
+				   slots:0-32,5461-5494,10923-10955 (100 slots) master
+				   0 additional replica(s)
+				M: e2e5cdbb12db31e703a8e6aa6374fc1a0381808b 127.0.0.1:7002
+				   slots:10956-16383 (5428 slots) master
+				   1 additional replica(s)
+				S: 3e9146c8e5f516b165449feb00a327d0e4e51f9d 127.0.0.1:7004
+				   slots: (0 slots) slave
+				   replicates e2e5cdbb12db31e703a8e6aa6374fc1a0381808b
+				M: 04069659c350a8fc2cd1223ac860b99208e65caf 127.0.0.1:7001
+				   slots:5495-10922 (5428 slots) master
+				   1 additional replica(s)
+				S: bd54ca756fa4ed2d55641bcc22cbac6a229708c0 127.0.0.1:7005
+				   slots: (0 slots) slave
+				   replicates 11c13986a88770dd04051174d596a7222f7e0146
+				S: 9d8b70a991d7b3ef06152d1be5ea94c1fd24ebb1 127.0.0.1:7003
+				   slots: (0 slots) slave
+				   replicates 04069659c350a8fc2cd1223ac860b99208e65caf
+				M: 11c13986a88770dd04051174d596a7222f7e0146 127.0.0.1:7000
+				   slots:33-5460 (5428 slots) master
+				   1 additional replica(s)
+				[OK] All nodes agree about slots configuration.
+				>>> Check for open slots...
+				>>> Check slots coverage...
+				[OK] All 16384 slots covered.
+			iii 给新加的节点分配添加从节点
+				root@josh-ubuntu:/usr/local/redis-4.0.8/cluster# ./redis-trib.rb add-node --slave 127.0.0.1:7007 127.0.0.1:7006
+				>>> Adding node 127.0.0.1:7007 to cluster 127.0.0.1:7006
+				>>> Performing Cluster Check (using node 127.0.0.1:7006)
+				M: 1dbda38d8aa67f192017a8e7a60af8bf76b34815 127.0.0.1:7006
+				   slots:0-32,5461-5494,10923-10955 (100 slots) master
+				   0 additional replica(s)
+				M: e2e5cdbb12db31e703a8e6aa6374fc1a0381808b 127.0.0.1:7002
+				   slots:10956-16383 (5428 slots) master
+				   1 additional replica(s)
+				S: 3e9146c8e5f516b165449feb00a327d0e4e51f9d 127.0.0.1:7004
+				   slots: (0 slots) slave
+				   replicates e2e5cdbb12db31e703a8e6aa6374fc1a0381808b
+				M: 04069659c350a8fc2cd1223ac860b99208e65caf 127.0.0.1:7001
+				   slots:5495-10922 (5428 slots) master
+				   1 additional replica(s)
+				S: bd54ca756fa4ed2d55641bcc22cbac6a229708c0 127.0.0.1:7005
+				   slots: (0 slots) slave
+				   replicates 11c13986a88770dd04051174d596a7222f7e0146
+				S: 9d8b70a991d7b3ef06152d1be5ea94c1fd24ebb1 127.0.0.1:7003
+				   slots: (0 slots) slave
+				   replicates 04069659c350a8fc2cd1223ac860b99208e65caf
+				M: 11c13986a88770dd04051174d596a7222f7e0146 127.0.0.1:7000
+				   slots:33-5460 (5428 slots) master
+				   1 additional replica(s)
+				[OK] All nodes agree about slots configuration.
+				>>> Check for open slots...
+				>>> Check slots coverage...
+				[OK] All 16384 slots covered.
+				Automatically selected master 127.0.0.1:7006
+				>>> Send CLUSTER MEET to node 127.0.0.1:7007 to make it join the cluster.
+				Waiting for the cluster to join.
+				>>> Configure node as replica of 127.0.0.1:7006.
+				[OK] New node added correctly.
+				root@josh-ubuntu:/usr/local/redis-4.0.8/cluster# ./redis-trib.rb check 127.0.0.1:7007
+				>>> Performing Cluster Check (using node 127.0.0.1:7007)
+				S: da1808f668a6177a400723dc1543f268a3bae9ba 127.0.0.1:7007
+				   slots: (0 slots) slave
+				   replicates 1dbda38d8aa67f192017a8e7a60af8bf76b34815
+			
 卸载删除 ubuntu下如何卸载删除redis
 	查看安装的软件 dpkg -l| grep redis
 	使用apt-get安装
