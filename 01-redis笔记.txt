@@ -56,7 +56,7 @@
 		[info] 0 expires
 		[info] 0 already expired
 	
-搭建redis集群
+搭建redis主从
 	两种方式
 		1/ 
 			master--slave1
@@ -136,10 +136,10 @@
 						-rw-r--r-- 1 root root  401 Mar 22 17:43 appendonly-test.aof
 						-rw-r--r-- 1 root root  189 Mar 22 17:56 dump.rdb
 						root@joshua-ubuntu:/usr/local/redis-4.0.8#
-				结论：这种简单集群环境下，各服务器rdb文件保持相同即可，不然会造成不必要的带宽浪费
+				结论：这种简单主从环境下，各服务器rdb文件保持相同即可，不然会造成不必要的带宽浪费
 			缺陷：
 				每次slave断开后(无论主动断开还是网络异常)，再次连接master时都要master全部dump出rdb文件再aof，所以多台slave不要一下都启动起来
-	集群其他配置项
+	主从其他配置项
 		################################# REPLICATION #################################
 		slave-priority 100 # 从机级别数字小级别高,在主机死掉的时候级别最高的代替主机,0：不允许做主机
 		slave-serve-stale-data yes/no # slave和master断开时,是否允许用旧数据响应请求,数据可能已过期
@@ -170,8 +170,8 @@ Sentinel-官方提供的高可用解决方案
 			sentinel parallel-syncs resque 5
 		你只需要将master指定给sentinel即可，每个master一个不同的名字，不需要指定slave(自动识别)，sentinel会自动更新配置(附带slave信息)，每次slave提升为master 每次发现新的sentinel都会重写配置信息。
 		
-		示例：配置一个简单redis集群通过一台sentinel进行监控，手动杀掉master看sentinel故障迁移效果. 参考文档：http://doc.redisfans.com/topic/sentinel.html
-				集群服务器分别为: 6379 6380 6381，其中6380为master另外两台为slave，配置参见“搭建redis集群”
+		示例：配置一个简单redis主从通过一台sentinel进行监控，手动杀掉master看sentinel故障迁移效果. 参考文档：http://doc.redisfans.com/topic/sentinel.html
+				主从服务器分别为: 6379 6380 6381，其中6380为master另外两台为slave，配置参见“搭建redis主从”
 				sentinel配置文件:
 					# sentinel monitor <master-name> <ip> <redis-port> <quorum>
 					sentinel monitor mymaster localhost 6379 1 # 因为只有一台sentinel,想要看到sentinel故障迁移quorum必须为1
